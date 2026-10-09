@@ -105,7 +105,9 @@ async function runPipeline(env, opts = {}) {
   // Nearest-neighbor read against Meaningful Minute's own post history (a no-op until history is imported).
   await call("mm", { action: "affinity" });
   // One batched LLM read, throttled on the Base44 side.
-  await call("enrich", opts.force_enrich ? { force: true } : {});
+  const read = await call("enrich", opts.force_enrich ? { force: true } : {});
+  // A read changes MM fit, social fit and relevance, so decide again right away instead of ten minutes later.
+  if ((read.enriched || 0) + (read.merged || 0) + (read.hidden || 0) > 0) await call("analyze");
   return log;
 }
 
