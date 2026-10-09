@@ -299,3 +299,54 @@ history is read again on the text and the story centroid together, because cover
 than one sentence. The verdict is a small table over fit (history score) and ride (match strength times the
 story's timing). `advise` then makes one language-model call to write the angle, cover lines, outline and caption
 from that evidence, with missing facts left as [placeholders].
+
+## 15. Events and the brief (October 2026)
+
+**Events (`shared/zg2/events.js`, `events_pass.ts`, entity `Event`).** A third level between the story and the
+broad topic: one specific thing that happened (a hijacking, a speech, a statement and the reaction to it, a
+visit) with everything that followed from it. Built on every analyze run except the half-hourly one that
+rebuilds the topics and the map.
+
+- Anchors are stories carried by three or more independent outlets (two when the story is hot) that are an
+  occurrence and not a running conversation. The language read says which (`Story.ev.type`: incident, statement,
+  speech, visit, decision, death, milestone, commemoration, or none); before a story has been read, its `kind`
+  stands in.
+- Two anchors are the same event at cosine 0.78 or more with a shared specific name, or 0.87 without. Every small
+  story joins the anchor it is closest to at 0.72 with a shared name, or 0.80 without. Names too common in this
+  corpus to prove anything (Netanyahu, Iran, New York and so on) do not count.
+- An event keeps its id through its anchor story, then by overlap of member stories, then by centroid.
+- Three dates. `occurred_at` is the date the language read worked out from the items (`Story.ev.on`), used only
+  when it is plausible next to the first sighting; otherwise the first sighting, marked `first_seen`.
+  `first_at` is when it became relevant. `relevant_until` is the projection.
+- Life (`eventLife`), on the scale of days: the rate is an exponentially weighted count of independent arrivals
+  (half-life 12 hours) in items per day. An event is relevant while the rate is above a fifth of its own peak and
+  above 1.5 items a day. Phase: breaking (under 8 hours old), building (rate up 12% on six hours ago and at
+  least 4 a day), peak (within 80% of the peak), fading, over. Time left is `ln(rate / floor) / k`, where `k` is
+  the decay seen since the peak, mixed with a prior (attention halves about every 18 hours, measured on the
+  stories that had completed a life by October 2026; a small sample) while the event is too young to show its own.
+  The projection has not been checked against outcomes yet. Each Event keeps its `hourly` series and both ends,
+  so that check can be run once a few weeks of finished events exist.
+- An event that is over for twelve hours becomes `past` and stays on record for ninety days.
+
+**The brief (`shared/zg2/brief.js`, written in `enrich`, served by `feed {view: "home"}`).** What to post now and
+through today.
+
+- `buildCandidates` is arithmetic. A candidate is an event (with the best open story inside it) or a story that
+  belongs to no event. Score: the story's opportunity reading (which already holds trend, fit and MM's own past
+  results), times the event's phase and time left, times the state of its broad topic, a little for a name
+  surging today, a little when the engine already calls it actionable. Embeddings give variety: a candidate at
+  cosine 0.80 or more to one already listed is dropped, and one above 0.62 is moved down. Anything marked posted
+  or passed leaves the list.
+- The ten best go to the LLM inside the same call that reads the stories, each with its facts: what happened and
+  when, phase, hours relevant so far and projected, new developments, MM fit, what MM's similar posts did, the
+  topic and its share, surging names. It returns `now` (one), `today` (three to five, in order, with when),
+  `pass` (up to two to leave alone) and one sentence on the day. It may only use refs from the list.
+- No extra call in normal running. A call is made for the brief alone only when nothing else needs a read, the
+  short list has changed and the brief is an hour old, or the brief is six hours old.
+- The feed recomputes the candidates on every load and lays the LLM's picks over them where they still stand.
+  A pick that was posted, passed, or whose event ended is replaced from the engine's order at once.
+
+**Screens.** The dashboard's left column is the brief: a compact "Post now" card and the plan for today as the
+first tab. The right column shows the live events on one shared clock (solid: relevant so far; pale: projected;
+tick: now). `/events` lists live and past events, `/event/:id` shows one event's dates, its life in six-hour
+steps with the projection, and its stories in the order they appeared.
