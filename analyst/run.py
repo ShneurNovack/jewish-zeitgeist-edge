@@ -280,6 +280,139 @@ def learn(client):
     return train(posts, np.stack(cover), np.stack(stories) if stories else None)
 
 
+# ------------------------------------------------------------------------------------------ atlas of past posts
+def _stat(vals):
+    v = np.asarray(vals, dtype=np.float64)
+    if not len(v):
+        return {"n": 0}
+    return {"n": int(len(v)), "mean": round(float(v.mean()), 3), "hit": round(float((v >= 0.75).mean()), 3), "flop": round(float((v <= 0.25).mean()), 3), "se": round(float(v.std() / max(1.0, np.sqrt(len(v)))), 3)}
+
+
+def atlas(client):
+    """Everything the "Past posts" page shows: a map of MM's own posts by meaning, the topics they fall into and
+    how each topic performs, and what posting time, cadence and caption traits are worth. Same embeddings and the
+    same normalized results the live engine scores stories with."""
+    import json
+    import re
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    rows = client.pull("MMPost", {}, ["vec", "y", "yv", "r", "rv", "format", "posted_at", "source", "caption", "likes", "comments", "views", "ext_id"], cap=20000)
+    P = []
+    for r in rows:
+        ys = [float(r[k]) for k in ("y", "yv") if r.get(k) is not None]
+        if not r.get("vec") or r.get("source") == "collab" or not ys:
+            continue
+        try:
+            t = calendar.timegm(time.strptime(r["posted_at"][:19], "%Y-%m-%dT%H:%M:%S"))
+        except Exception:
+            continue
+        P.append({**r, "v": unpack(r["vec"]), "p": sum(ys) / len(ys), "t": t})
+    if len(P) < MIN_POSTS:
+        return None
+    P.sort(key=lambda p: p["t"])
+    n = len(P)
+    X = np.stack([p["v"] for p in P])
+    y = np.array([p["p"] for p in P])
+    t = np.array([p["t"] for p in P], dtype=np.float64)
+    ny = ZoneInfo("America/New_York")
+    dt = [datetime.fromtimestamp(p["t"], ny) for p in P]
+
+    # Map: t-SNE of the caption embeddings (through 50 principal components), fixed seed so it is stable day to day.
+    Z = PCA(n_components=min(50, n - 1), random_state=7).fit_transform(X)
+    xy = TSNE(n_components=2, perplexity=40, init="pca", learning_rate="auto", random_state=7, metric="cosine").fit_transform(Z)
+    xy = (xy - xy.min(0)) / (xy.max(0) - xy.min(0) + 1e-9)
+
+    # Topics: fixed, named centroids (analyst/topics.json). A post belongs to the nearest one.
+    here = os.path.dirname(os.path.abspath(__file__))
+    named = json.load(open(os.path.join(here, "topics.json")))
+    C = np.stack([unpack(tp["c"]) for tp in named])
+    lab = np.argmax(X @ C.T, axis=1)
+    fmts = FORMATS
+    recent_cut = t.max() - 180 * 86400
+    topics = []
+    for k, tp in enumerate(named):
+        idx = np.where(lab == k)[0]
+        if not len(idx):
+            continue
+        order = idx[np.argsort(-y[idx])]
+        mult = [np.exp(P[i]["r"]) for i in idx if P[i].get("r") is not None]
+        by_fmt = {f: _stat([y[i] for i in idx if P[i].get("format") == f]) for f in fmts}
+        best = max((f for f in fmts if f != "podcast" and by_fmt[f]["n"] >= 8), key=lambda f: by_fmt[f]["mean"], default="")
+        rec = [y[i] for i in idx if t[i] >= recent_cut]
+        topics.append({"id": k, "name": tp["name"], **_stat(y[idx]), "mult": round(float(np.median(mult)), 2) if mult else None,
+                       "recent": _stat(rec), "best_format": best, "by_format": {f: by_fmt[f] for f in fmts if by_fmt[f]["n"]},
+                       "x": round(float(np.median(xy[idx, 0])), 4), "y": round(float(np.median(xy[idx, 1])), 4),
+                       "top": [P[i]["ext_id"] for i in order[:5]], "bottom": [P[i]["ext_id"] for i in order[::-1][:3]]})
+
+    # Timing, in New York time.
+    hour = np.array([d.hour for d in dt])
+    wd = np.array([d.weekday() for d in dt])
+    mon = np.array([d.month for d in dt])
+    dom = np.array([d.day for d in dt])
+    hb = hour // 3
+    fm = np.array([p.get("format") or "image" for p in P])
+    def timing(mask):
+        return {"weekday": [_stat(y[mask & (wd == k)]) for k in range(7)], "block": [_stat(y[mask & (hb == k)]) for k in range(8)],
+                "grid": [[_stat(y[mask & (wd == a) & (hb == b)]) for b in range(8)] for a in range(7)],
+                "month": [_stat(y[mask & (mon == k)]) for k in range(1, 13)],
+                "third": [_stat(y[mask & (dom <= 10)]), _stat(y[mask & (dom > 10) & (dom <= 20)]), _stat(y[mask & (dom > 20)])]}
+    everything = np.ones(n, dtype=bool)
+    tim = {"all": timing(everything), **{f: timing(fm == f) for f in fmts if (fm == f).sum() >= 150}}
+
+    # Traits: what else moves the result. Repeat coverage is measured against MM's own posts of the three days before.
+    S = X @ X.T
+    sat = np.zeros(n)
+    for i in range(1, n):
+        m = t[:i] >= t[i] - 3 * 86400
+        sat[i] = S[i, :i][m].max() if m.any() else 0.0
+    cap = [p.get("caption") or "" for p in P]
+    clen = np.array([len(c) for c in cap])
+    first = [c.split("\n")[0][:160] for c in cap]
+    has_num = np.array([bool(re.search(r"\d", f)) for f in first])
+    has_q = np.array(["?" in f for f in first])
+    days = {}
+    for d in dt:
+        days[d.date()] = days.get(d.date(), 0) + 1
+    perday = np.array([days[d.date()] for d in dt])
+    def rows_of(pairs):
+        return [{"label": lbl, **_stat(y[m])} for lbl, m in pairs if m.sum() >= 20]
+    traits = [
+        {"name": "Caption length", "rows": rows_of([("Under 150 characters", clen < 150), ("150 to 400", (clen >= 150) & (clen < 400)), ("Over 400", clen >= 400)])},
+        {"name": "First line", "rows": rows_of([("Has a number in it", has_num), ("No number", ~has_num), ("Is a question", has_q), ("Not a question", ~has_q)])},
+        {"name": "Closest post of the previous three days", "rows": rows_of([("Nothing similar", sat < 0.6), ("Loosely related", (sat >= 0.6) & (sat < 0.7)), ("Same story or very close", sat >= 0.7)])},
+        {"name": "Posts that day", "rows": rows_of([("1 to 2", perday <= 2), ("3 to 4", (perday >= 3) & (perday <= 4)), ("5 to 6", (perday >= 5) & (perday <= 6)), ("7 or more", perday >= 7)])},
+    ]
+
+    # Formats, and the account over time.
+    formats = []
+    for f in fmts:
+        m = fm == f
+        if not m.sum():
+            continue
+        likes = [P[i].get("likes") or 0 for i in np.where(m)[0] if (P[i].get("likes") or 0) > 0]
+        views = [P[i].get("views") or 0 for i in np.where(m)[0] if (P[i].get("views") or 0) > 0]
+        formats.append({"format": f, "n": int(m.sum()), "median_likes": int(np.median(likes)) if likes else 0, "median_views": int(np.median(views)) if views else 0})
+    months = {}
+    for i, d in enumerate(dt):
+        key = d.strftime("%Y-%m")
+        mm = months.setdefault(key, {f: [] for f in fmts})
+        if (P[i].get("likes") or 0) > 0:
+            mm[fm[i]].append(P[i]["likes"])
+    monthly = [{"month": k, **{f: {"n": len(v[f]), "likes": int(np.median(v[f])) if v[f] else 0} for f in fmts}} for k, v in sorted(months.items())]
+
+    points = []
+    for i, p in enumerate(P):
+        mult = np.exp(p["r"]) if p.get("r") is not None else (np.exp(p["rv"]) if p.get("rv") is not None else None)
+        points.append([p.get("ext_id") or "", int(round(xy[i, 0] * 1000)), int(round(xy[i, 1] * 1000)), int(lab[i]), int(round(y[i] * 100)),
+                       round(float(mult), 2) if mult is not None else None, fmts.index(fm[i]) if fm[i] in fmts else 3, int(p["t"]),
+                       int(p.get("likes") or 0), int(p.get("comments") or 0), int(p.get("views") or 0), re.sub(r"[\ud800-\udfff]", "", re.sub(r"\s+", " ", cap[i])[:110])])
+    return {"built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "posts": n, "first": int(t.min()), "last": int(t.max()), "formats_order": fmts,
+            "overall": _stat(y), "topics": topics, "timing": tim, "traits": traits, "formats": formats, "monthly": monthly, "points": points}
+
+
 def main():
     t0 = time.time()
     client = Client()
@@ -290,6 +423,12 @@ def main():
         payload["report"]["mm"] = mm
         if model:
             payload["model"] = model
+        try:
+            at = atlas(client)
+            if at:
+                payload["atlas"] = at
+        except Exception as e:  # the atlas is a view, never a reason to lose the audit or the model
+            payload["report"]["atlas_error"] = f"{type(e).__name__}: {str(e)[:160]}"
         a = payload["report"]["audit"]
         payload["message"] = (
             (f"Audit of {a['items']} items: agreement {a.get('ami', 'n/a')}, {len(a.get('merges', []))} possible merges, {len(a.get('splits', []))} possible splits. " if a.get("status") == "ok" else "Audit waiting for more items. ")
