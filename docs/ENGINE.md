@@ -97,7 +97,7 @@ Each is 0 to 1 and explainable on its own.
 | Social | tone, human interest, video and quote share, social objects, minus process news and hostility; blended with the LLM read |
 | Jewish relevance | share of items with a Jewish or Israeli marker, the LLM read when present, spread across communities |
 | Momentum | burst level, acceleration, abnormality |
-| MM fit | pillar and tone prior, the LLM read, and nearest-neighbor performance of past MM posts once history is imported |
+| MM fit | what the account's own past posts say (coverage and performance of the nearest ones), the LLM read, and a pillar and tone prior |
 
 Source diversity uses Shannon entropy over outlets (the effective number of outlets), originality, and the number
 of platforms involved.
@@ -153,25 +153,61 @@ format, and rules on borderline merges. It only sees stories the trend engine al
 handful of fresh single-source human stories the prior rates as a good fit. **It never decides what is trending.**
 
 ### 12. Learning from Meaningful Minute (`mm` function, `analyst/` job)
-- **Import:** captions, dates, formats, likes, comments, views, shares, saves. Paste or upload a CSV on the Engine page.
-- **Normalization:** `E = likes + 2 comments + 3 (saves + shares)`; `r = ln(1+E)` minus the median of the previous 30
-  posts of the same format; `y` = percentile of `r` within the trailing 180 days. Reels get the same on views.
-- **Now:** k-nearest-neighbor read (k = 20, weight `cos^4`, 180 day half-life) of how similar past posts performed.
-  Needs no training and explains itself. Active from 100 posts.
-- **Offline (`analyst/run.py`, GitHub Actions, daily):** from 300 posts on, ridge regression (scikit-learn,
-  cross-validated alpha) from the caption embedding and format to normalized performance. It is compared on the
-  most recent fifth of the history with the nearest-neighbor baseline and with LightGBM (PCA-32, format, hour,
-  weekday). Ridge is exported (1,024 weights, one dot product in the live engine) when it is useful; the report says
-  so if LightGBM wins by 0.03 Spearman or more, which is the bar for adding a tree walker to the live path.
+
+**What it learned from.** 636 posts from the account's own grid, 26 March to 9 October 2026, read in a browser:
+caption, format, likes and comments for 477 of them, view counts for 391 reels. 553 are the account's own posts
+(326 reels, 139 carousels, 88 single images); the rest are collaborations and are left out of performance scoring.
+475 posts older than three days with at least one metric are stored as `MMPost` records with their embeddings.
+
+**What the account turned out to be.** The first version of MM fit assumed MM avoids politics and conflict. The
+posts say otherwise. Typical performance by kind of post, as a multiple of the format's median:
+
+| Kind of post | Typical | Share that are 2x hits |
+| --- | --- | --- |
+| Tragedy, mourning, missing people | 1.4x | 29% |
+| Kindness, family, heartwarming | 1.4x | 38% |
+| Jewish history and "did you know" | 1.3x | 26% |
+| Hostages and October 7 stories | 1.3x | 31% |
+| Holocaust and survivors | 1.3x | 27% |
+| Antisemitism called out | 1.2x | 27% |
+| Jewish pride in sports, business, entertainment | 1.2x | 37% |
+| Fallen soldiers and the IDF | 1.0x | 30% |
+| Torah, faith, the Rebbe | 0.9x | 12% |
+| Only in Israel, Kotel and holiday scenes | 0.9x | 17% |
+| Political fights (Mamdani, the UN, Netanyahu, Trump) | 0.9x | 22% |
+
+The biggest single posts were advocacy and outrage (two reactions to 9/11 at 2.6M views, Rubio answering
+protesters, the NYPD commissioner backing Israel) and individual human stories (the man who stayed with his
+friend on 9/11, Edith Eger, a lone soldier). Reels have a median of about 64,000 views and 2,200 likes; carousels a
+median of about 4,000 likes. Podcast clips that say "comment link" collect comments that are requests, so their
+comments are not counted as engagement.
+
+**How it is used.**
+- **Normalization:** `E = likes + 2 comments + 3 (saves + shares)`; `r = ln(1+E)` minus the median of the 30 posts of
+  the same format around it in time; `y` = percentile of `r` among posts of that format within four months. Reels
+  get the same on views, and a post is judged on the better of the two.
+- **History reading for each story (live, every tick):** the 20 nearest past posts by embedding. *Coverage* comes from
+  the mean similarity of the nearest eight (0.50 is ordinary Jewish news, 0.63 is home ground, both measured on
+  the account). *Performance* is the similarity-weighted percentile of those neighbors. The reading is
+  `coverage * (0.75 + 0.5 * (performance - 0.5))`.
+- **MM fit** is 40% history, 45% language read, 15% prior once a story has been read; 60% history and 40% prior
+  before that. The language model is shown the same nearest posts and how they did.
+- **Six new content pillars** came out of the reading: standing up for Israel in public, antisemitism called out,
+  only in Israel, Jewish history and did-you-know, heroism under attack, mourning and remembrance.
+- **Trained models, checked honestly:** on the most recent fifth of the history, the nearest-neighbor reading has a
+  rank correlation of 0.35 with real performance, ridge regression 0.16 and LightGBM 0.22. So nearest neighbors is
+  what runs. The daily job (`analyst/run.py`) repeats the comparison as history grows and exports ridge only when
+  it is at least as good; LightGBM would need to win by 0.03 to justify a tree walker in the live path.
 - **Clustering audit (same job):** all items of the last 60 hours are clustered again with HDBSCAN (scikit-learn)
   on a PCA-50 reduction and compared with the live stories: adjusted Rand index, adjusted mutual information,
-  homogeneity, completeness. Stories HDBSCAN would merge are handed to the language read for a ruling; stories it
-  would split are listed on the Engine page. First run on live data: 87% agreement (AMI), homogeneity 0.92,
-  completeness 0.93.
+  homogeneity, completeness. Stories HDBSCAN would merge are handed to the language read for a ruling. First run on
+  live data: 87% agreement (AMI), homogeneity 0.92, completeness 0.93.
 - **Auth for the job:** no repository secrets. The workflow presents a GitHub OIDC token; the Worker verifies the
   signature and that it was issued to this repository's `analyst.yml` on `main` (`src/oidc.js`).
 - **Feedback loop:** every recommendation is logged (`Recommendation`) with scores, engine version and propensity;
   "We posted this" and "Not for us" are recorded against it. That log is the training set for a ranker.
+- **Keeping it current:** new posts can be added from the Engine page (CSV paste or upload). Importing the same post
+  twice does nothing.
 
 ## Migration from the first generation
 
@@ -202,5 +238,5 @@ hourly volume, the map frame, models), `PipelineRun`, `Config`, `DailyTerms`.
 
 - Instagram, X and TikTok are not read. Conversation is inferred from Reddit, Bluesky, Mastodon, Telegram, search,
   YouTube, Wikipedia and from discourse signals inside the coverage.
-- MM fit is a prior plus one language-model opinion until post history is imported.
+- MM fit rests on about six months of the account's posts. It should be topped up every month or two.
 - Topic baselines need a few weeks of data before "times its usual share" is trustworthy.
