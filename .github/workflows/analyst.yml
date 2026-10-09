@@ -1,0 +1,37 @@
+name: analyst
+
+# Daily offline job for the Jewish Zeitgeist engine: audits the live clustering with HDBSCAN and, once enough of
+# Meaningful Minute's post history is imported, trains the model behind "MM fit". See analyst/run.py.
+# It needs no repository secrets. It identifies itself to the Worker with a GitHub OIDC token.
+
+on:
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["analyst/**", ".github/workflows/analyst.yml"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: analyst
+  cancel-in-progress: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: analyst/requirements.txt
+      - run: pip install -r analyst/requirements.txt
+      - run: python analyst/run.py
+        env:
+          WORKER_URL: https://jewish-zeitgeist-edge.shneur.workers.dev
