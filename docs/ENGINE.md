@@ -240,3 +240,35 @@ hourly volume, the map frame, models), `PipelineRun`, `Config`, `DailyTerms`.
   YouTube, Wikipedia and from discourse signals inside the coverage.
 - MM fit rests on about six months of the account's posts. It should be topped up every month or two.
 - Topic baselines need a few weeks of data before "times its usual share" is trustworthy.
+
+
+## 13. Two years of history and the trained model (October 2026)
+
+The history was extended to every post on the account's grid from September 2024 to October 2026: 3,432 posts, of
+which 2,536 are Meaningful Minute's own with readable results and 841 are collab posts hosted on other accounts.
+Collabs count for coverage only, never for performance. Studio podcast clips are treated as a format of their own
+("podcast"), because they run at about a third of a news reel whatever the topic and would otherwise drag down
+every subject they touch.
+
+Models were compared on posts none of them had seen: five folds, each predicting the tenth of the history that
+follows everything it was trained on (1,268 predictions in all). Rank correlation with the real result:
+
+| Model | Rank correlation |
+|---|---|
+| Nearest neighbors as first shipped (20 neighbors, cos^4, 180-day half-life) | 0.244 |
+| Nearest neighbors, tuned (40 neighbors, cos^8, one-year half-life) | 0.279 |
+| Ridge regression on the embedding, recent posts weighted up | 0.240 |
+| LightGBM on 48 principal components plus format | 0.211 |
+| Blend: 70% tuned neighbors, 30% ridge | 0.296 |
+
+The blend ships. Of the fifth of posts it rated highest, 35% were real hits (top quarter for their format and
+time); of the fifth it rated lowest, 13% were; the base rate is 24%. It is strongest on carousels (0.41) and
+weakest on podcast clips (0.21). This is a real but modest signal: what a post is about explains part of how it
+does, and execution, timing and luck explain the rest.
+
+The ridge model is trained on captions and read on story centroids built from headlines, so the daily job rescales
+it to the range the neighbor read has on live stories, and sends the spread of blended predictions over today's
+stories. The live engine turns a prediction into a rank among today's stories (`mm_knn.pr`) and the history
+score is `coverage x (0.55 + 0.45 x rank)`. Coverage runs from where ordinary stories sit against the history
+(lower quartile, about 0.51) to where MM's own posts sit against each other (median, about 0.64); both are measured
+by the job and move as the history grows.
