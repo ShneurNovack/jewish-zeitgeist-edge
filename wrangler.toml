@@ -1,0 +1,10 @@
+name = "jewish-zeitgeist-edge"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true
