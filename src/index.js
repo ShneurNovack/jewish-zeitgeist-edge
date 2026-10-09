@@ -3,8 +3,11 @@
 //   GET  /fetch?url=...               -> upstream body            relay for feeds that refuse Base44's servers
 //   POST /run                         -> runs one pipeline tick now (same as the cron)
 //   GET  /health
+//   POST /analyst/pull, /analyst/push -> the daily offline job on GitHub Actions; authenticated by a GitHub OIDC token
 // A cron trigger runs the pipeline every 10 minutes: ingest, cluster, probe, analyze, structure, mm, enrich.
 // Every route except /health needs the shared key in the x-zg-key header (ZG_KEY secret).
+
+import { verifyGithubToken } from "./oidc.js";
 
 const MODEL = "@cf/baai/bge-m3";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
@@ -111,6 +114,24 @@ async function runPipeline(env, opts = {}) {
   return log;
 }
 
+// ---- the offline analyst (GitHub Actions) ----------------------------------------------------------------------
+// The job carries no secret. It presents a GitHub OIDC token, verified in oidc.js.
+const ANALYST_ENTITIES = new Set(["Signal", "Story", "MMPost", "Recommendation", "Theme"]);
+
+async function analyst(request, env, url) {
+  const auth = request.headers.get("authorization") || "";
+  const claims = await verifyGithubToken(auth.startsWith("Bearer ") ? auth.slice(7) : "", env);
+  if (!claims) return json({ error: "unauthorized" }, 401);
+  const body = await request.json().catch(() => ({}));
+  const base = (env.APP_URL || "").replace(/\/$/, "");
+  let fn;
+  if (url.pathname === "/analyst/pull") { if (!ANALYST_ENTITIES.has(body.entity)) return json({ error: "entity not allowed" }, 400); fn = "export"; }
+  else if (url.pathname === "/analyst/push") fn = "analyst";
+  else return json({ error: "not found" }, 404);
+  const res = await fetch(`${base}/functions/${fn}`, { method: "POST", headers: { "content-type": "application/json", "x-zg-key": env.ZG_KEY }, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });
+  return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+}
+
 export default {
   async scheduled(_event, env, ctx) {
     ctx.waitUntil(runPipeline(env).then((log) => console.log(JSON.stringify(log.map((l) => ({ stage: l.stage, status: l.status, ms: l.ms, error: l.error }))))));
@@ -118,7 +139,10 @@ export default {
 
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/health" || url.pathname === "/") return json({ ok: true, service: "jewish-zeitgeist-edge", model: MODEL });
+    if (url.pathname === "/health" || url.pathname === "/") return json({ ok: true, service: "jewish-zeitgeist-edge", model: MODEL, analyst: true });
+    if (url.pathname.startsWith("/analyst/") && request.method === "POST") {
+      try { return await analyst(request, env, url); } catch (e) { return json({ error: String(e?.message || e).slice(0, 200) }, 502); }
+    }
     if (!env.ZG_KEY || request.headers.get("x-zg-key") !== env.ZG_KEY) return json({ error: "unauthorized" }, 401);
     try {
       if (url.pathname === "/embed" && request.method === "POST") return await embed(request, env);
