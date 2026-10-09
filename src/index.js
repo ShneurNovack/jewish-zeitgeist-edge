@@ -3,7 +3,7 @@
 //   GET  /fetch?url=...               -> upstream body            relay for feeds that refuse Base44's servers
 //   POST /run                         -> runs one pipeline tick now (same as the cron)
 //   GET  /health
-// A cron trigger runs the pipeline every 10 minutes.
+// A cron trigger runs the pipeline every 10 minutes: ingest, cluster, probe, analyze, structure, mm, enrich.
 // Every route except /health needs the shared key in the x-zg-key header (ZG_KEY secret).
 
 const MODEL = "@cf/baai/bge-m3";
@@ -96,10 +96,15 @@ async function runPipeline(env, opts = {}) {
   };
   await call("ingest", { max_seconds: 40 });
   for (let i = 0; i < (opts.passes || 3); i++) { const r = await call("cluster"); if (!r.more) break; }
-  // Search check: looks up the hot topics on Google autocomplete, Wikipedia and news search. It only takes the
-  // topics that are due, so most ticks it does a handful of lookups or none.
+  // Search check: looks up the hot stories on Google autocomplete, Wikipedia and news search (only the ones that are due).
   await call("probe");
-  await call("score");
+  // Trend analytics, readings, decisions; every half hour also the broad topics, the map and a snapshot.
+  await call("analyze");
+  // Angles and social objects inside the hottest stories that changed.
+  await call("structure");
+  // Nearest-neighbor read against Meaningful Minute's own post history (a no-op until history is imported).
+  await call("mm", { action: "affinity" });
+  // One batched LLM read, throttled on the Base44 side.
   await call("enrich", opts.force_enrich ? { force: true } : {});
   return log;
 }
