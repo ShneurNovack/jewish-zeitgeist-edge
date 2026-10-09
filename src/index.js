@@ -96,6 +96,9 @@ async function runPipeline(env, opts = {}) {
   };
   await call("ingest", { max_seconds: 40 });
   for (let i = 0; i < (opts.passes || 3); i++) { const r = await call("cluster"); if (!r.more) break; }
+  // Search check: looks up the hot topics on Google autocomplete, Wikipedia and news search. It only takes the
+  // topics that are due, so most ticks it does a handful of lookups or none.
+  await call("probe");
   await call("score");
   await call("enrich", opts.force_enrich ? { force: true } : {});
   return log;
