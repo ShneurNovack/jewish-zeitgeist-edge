@@ -3,6 +3,12 @@ main = "src/index.js"
 compatibility_date = "2025-09-01"
 workers_dev = true
 
+[vars]
+APP_URL = "https://jewish-pulse-map.base44.app"
+
+[triggers]
+crons = ["*/10 * * * *"]
+
 [ai]
 binding = "AI"
 
