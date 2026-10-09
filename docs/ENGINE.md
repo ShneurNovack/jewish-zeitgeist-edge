@@ -272,3 +272,30 @@ stories. The live engine turns a prediction into a rank among today's stories (`
 score is `coverage x (0.55 + 0.45 x rank)`. Coverage runs from where ordinary stories sit against the history
 (lower quartile, about 0.51) to where MM's own posts sit against each other (median, about 0.64); both are measured
 by the job and move as the history grows.
+
+
+## 14. Timing and metadata, the Past posts page and the idea tester (October 2026)
+
+**Timing and metadata were tested, and mostly left out of the score.** On held-out posts, posting hour, weekday,
+day of month, season, posts per day and the gap since the previous post added almost nothing to the prediction
+(the weekday spread is 7 percentile points, Sunday highest and Tuesday lowest; topics spread 28 points).
+Weighting neighbors toward the same time of year made predictions slightly worse. One effect was kept: a post
+that follows a very similar one within three days lands about five points lower, so a story close to something
+MM posted in the last four days gets an 8% discount and a visible reason (`mm_knn.recent`). Caption traits
+(longer captions, a number in the first line, no question opener) are real but are about writing, so they feed
+the hook guidance and not story selection.
+
+**Past posts (`/past`).** The daily job builds an atlas (`analyst/run.py: atlas`) and pushes it with the audit:
+a t-SNE map of MM's own posts from their embeddings, 34 named topics (`analyst/topics.json`: fixed centroids, a
+post belongs to the nearest), per-topic results, timing tables in New York time, caption and cadence traits,
+format baselines by month. It is stored in the `mm_atlas` blob, with the points in `mm_atlas_p*` chunks, and
+served by `feed {view: "past"}`.
+
+**Idea tester (`/test`, function `idea`).** `read` joins three readings for any typed text, with no language model:
+the history reading every story gets; cosine against every active story centroid (measured on live stories: the
+same story scores 0.70 or more, a related one 0.60 to 0.70, an unrelated one under 0.57); and whole-word matches
+against the names spiking today and the people and entities of active stories. When the text is a live story, the
+history is read again on the text and the story centroid together, because coverage describes a story more fully
+than one sentence. The verdict is a small table over fit (history score) and ride (match strength times the
+story's timing). `advise` then makes one language-model call to write the angle, cover lines, outline and caption
+from that evidence, with missing facts left as [placeholders].
