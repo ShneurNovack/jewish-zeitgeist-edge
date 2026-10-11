@@ -373,7 +373,8 @@ of the account's own that are worth reposting or remaking now. Two reasons, stro
 two back and four ahead; only for posts at least 300 days old) and what is live now (cosine to live events and
 event-less stories, counted from 0.58). What may come back depends on the post's topic on the Past posts map:
 evergreen subjects for either reason (or alone when the post was in its format's top tenth), holiday and Torah
-messages only at their time of year, news only on its anniversary and only from the top 15%, promos never.
-Posts under 150 days old, podcast clips, anything the account ran again within 90 days (cosine 0.82) and
+messages only at their time of year, news on its anniversary when it was in the top 15% (civil date; the Hebrew date too for posts about the fallen),
+or at any time when it sits at cosine 0.70 or more to something live and was in its format's top quarter, promos never.
+Posts under 120 days old, podcast clips, anything the account ran again within 90 days (cosine 0.82) and
 anything the editor passed are left out. The five best are offered to the LLM in the brief call as an optional
 `bring_back` pick with an angle. Shown under today's plan and in full on the Past posts page.
