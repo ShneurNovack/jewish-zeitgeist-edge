@@ -378,3 +378,52 @@ or at any time when it sits at cosine 0.70 or more to something live and was in 
 Posts under 120 days old, podcast clips, anything the account ran again within 90 days (cosine 0.82) and
 anything the editor passed are left out. The five best are offered to the LLM in the brief call as an optional
 `bring_back` pick with an angle. Shown under today's plan and in full on the Past posts page.
+
+## 17. Reading the articles, memory, and the engine grading itself (October 2026)
+
+**Reading the articles (`structure` stage, `articleText` in `shared/zg2/structure.js`, `Story.read`).** For big
+stories (already called worth posting, or heat 25 and up, or five independent outlets with opportunity 0.3) the
+stage opens up to four reports from different outlets and keeps the text of up to three (2,400 characters each).
+The text is the page's `articleBody` when the publisher provides one, otherwise the paragraphs inside `<article>`.
+A story is read once and again when it doubles. A page that does not load, a paywall or a block page is left
+alone; nothing is worked around. On the first test 28 of 34 pages were readable.
+
+**Fact sheet (`enrich`, `Story.facts`).** A story with article text is read again by the LLM from the excerpts
+(a shared budget of 18,000 characters per call). It returns up to six specific facts, the best direct quote and who
+said it, and what there is to show, and it bases its label, summary, fit and cover line on the reports. The same
+call returns who each named person is (`people_who`). No extra call. The facts appear on the story page and go to
+the brief with each candidate.
+
+**Storylines (`linkStorylines` in `events.js`, `memory_pass.ts`, entity `Storyline`).** Events from the last 30
+days are linked when they are close in meaning (cosine 0.66) and share a specific name, or at 0.86 without one.
+One-word names must be at least six letters and not an ordinary word. Only events with some claim on the account
+(opportunity 0.18, or 0.12 while live) take part. A group of two or more is a storyline; each event is a chapter
+and keeps its own dates. A storyline keeps its id through the events it holds. The LLM names it in the regular
+read and can reject it (`same: false`), which hides it.
+
+**People (`memory_pass.ts`, entity `Person`).** Every person the language read places at the center of a story
+gets a record: who they are, the live stories they are in, the events and storylines they have been part of, the
+days seen. The `mm` stage adds the account's own record every hour: posts whose caption carries the full name (or
+the family name, capitalised, when it is at least six letters), how those posts ranked in their format, the most
+recent and the best three. The same record is kept per storyline, by meaning (cosine 0.66 to its centre). Four
+scored posts about a person move a candidate by up to 8% either way.
+
+**Self-grading (`shared/zg2/selfgrade.js`, daily in `analyze`, blob `learned`).** Graded by replay, so there is a
+result on day one: a finished event or story still has its hourly history, so each call is made again at every
+step with the future hidden, by the same code that runs live, and compared with what followed.
+- Event time left: replayed every six hours of every finished event. First result (78 events, 346 projections):
+  the projection was short for events that had just broken (actual about 1.5 times projected), about right while
+  building and at the peak, and long once fading (0.7). The correction per phase is the median of actual over
+  projected, pulled toward 1 by a prior worth 30 calls, kept between 0.5 and 2, and applied from the next run.
+- Story stage calls: a "rising" call is right when the next six hours bring at least half the reports of the six
+  before (and at least 1.5); "cooling" when they bring fewer; "quiet" when at most one report follows in twelve
+  hours. Hit rates are reported next to the base rate. The stage rules are not changed automatically.
+- Story time left: one multiplier, learned the same way.
+- Picks: of the recommended stories the editor judged, the share posted or saved.
+
+**Early breakout (`analyst/run.py`, `breakoutChance`).** A logistic model on the first two to eight hourly
+buckets of a story that is not big yet (reports so far, the last hour, mass by family, age, hour of day), target
+eight independent reports in the end. Tested on later stories it has not seen. First result, on 2,360 finished
+stories: AUC 0.60, against 0.63 for simply counting reports so far, so it is not exported and nothing is shown.
+Adding the story's final Jewish-relevance score pushed it to 0.97, which is leakage (big stories are the ones that
+get read), so that feature is out. The job retrains daily and the model switches on by itself above 0.70.

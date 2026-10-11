@@ -9,6 +9,10 @@ for the live pipeline:
   2. Learn from Meaningful Minute's own results. Once enough past posts are imported, test nearest neighbors, a
      ridge regression, their blend and LightGBM on posts none of them has seen (five forward folds), and export the
      ridge weights, the validated settings and the calibration the live engine needs to read a story's prediction.
+  3. Learn what a big story looks like in its first hours. From stories that have finished, train a small logistic
+     model: given the first two to eight hours of a story that is not big yet, how likely is it to become big. The
+     weights are exported only when the model separates later stories it has not seen; otherwise the report says so
+     and the live engine shows nothing.
 
 It never prints data. Results go back to the app, which shows them on the Engine page.
 
@@ -413,6 +417,86 @@ def atlas(client):
             "overall": _stat(y), "topics": topics, "timing": tim, "traits": traits, "formats": formats, "monthly": monthly, "points": points}
 
 
+# ---- early breakout -------------------------------------------------------------------------------------------------
+BIG = 8        # independent reports: a story with this many is "big"
+MAX_H = 8      # the model looks at the first two to eight hourly buckets
+
+
+def _hour(k):
+    return calendar.timegm((int(k[:4]), int(k[4:6]), int(k[6:8]), int(k[8:10]), 0, 0)) // 3600
+
+
+def breakout_features(buckets, h):
+    """The same nine numbers as breakoutFeatures in the app (shared/zg2/selfgrade.js). Keep the two in step."""
+    idx = [(_hour(k), list(row) + [0] * 6) for k, row in buckets.items()]
+    h0 = min(i for i, _ in idx)
+    ind = last = news = soc = srch = vid = 0.0
+    for hr, row in idx:
+        i = hr - h0
+        if i >= h:
+            continue
+        ind += row[5] or 0
+        if i == h - 1:
+            last += row[5] or 0
+        news += row[0] or 0
+        soc += row[1] or 0
+        srch += (row[2] or 0) + (row[3] or 0)
+        vid += row[4] or 0
+    hod = h0 % 24
+    return [np.log1p(ind), np.log1p(last), np.log1p(news), np.log1p(soc), np.log1p(srch), np.log1p(vid), h, np.sin(2 * np.pi * hod / 24), np.cos(2 * np.pi * hod / 24)], h0, ind
+
+
+def breakout(client):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+
+    rows = client.pull("Story", {}, ["buckets", "n_ind", "hidden", "merged_into"], cap=9000)
+    now_h = time.time() / 3600
+    X, y, when, sid = [], [], [], []
+    for s in rows:
+        b = s.get("buckets") or {}
+        if not b or s.get("hidden") or s.get("merged_into"):
+            continue
+        hours = [_hour(k) for k in b]
+        h0 = min(hours)
+        # finished (a day and a half old), and short enough that its first hours were never pruned from its history
+        # (a story keeps seven days of hourly counts, counted back from its last report)
+        if now_h - h0 < 36 or max(hours) - h0 > 150:
+            continue
+        final = float(s.get("n_ind") or 0)
+        for h in range(2, MAX_H + 1):
+            x, _, ind = breakout_features(b, h)
+            if ind <= 0 or ind >= BIG:      # nothing independent yet, or already big: not a prediction
+                continue
+            X.append(x); y.append(1 if final >= BIG else 0); when.append(h0); sid.append(s["id"])
+    n_stories = len(set(sid))
+    out = {"status": "waiting", "stories": n_stories, "samples": len(y), "big": BIG, "max_h": MAX_H}
+    if n_stories < 400 or sum(y) < 40:
+        return out
+    X = np.array(X, dtype=np.float64); y = np.array(y); when = np.array(when)
+    cut = np.quantile(when, 0.7)                     # train on the earlier stories, test on the later ones
+    tr, te = when <= cut, when > cut
+    if y[te].sum() < 12 or y[tr].sum() < 20:
+        return out
+    mu, sd = X[tr].mean(0), X[tr].std(0) + 1e-9
+    model = LogisticRegression(C=1.0, max_iter=1000).fit((X[tr] - mu) / sd, y[tr])
+    p = model.predict_proba((X[te] - mu) / sd)[:, 1]
+    auc = float(roc_auc_score(y[te], p))
+    auc_count = float(roc_auc_score(y[te], X[te][:, 0]))     # the naive rule: more reports so far, more likely
+    order = np.argsort(-p)
+    top = order[: max(10, len(order) // 20)]
+    out.update({"auc": round(auc, 3), "auc_count_only": round(auc_count, 3), "base": round(float(y[te].mean()), 4), "top5_rate": round(float(y[te][top].mean()), 3),
+                "train": int(tr.sum()), "test": int(te.sum()), "test_big": int(y[te].sum())})
+    if auc < 0.7:
+        out["status"] = "weak"
+        return out
+    mu, sd = X.mean(0), X.std(0) + 1e-9                    # the exported model is refit on everything
+    final_model = LogisticRegression(C=1.0, max_iter=1000).fit((X - mu) / sd, y)
+    out.update({"status": "live", "w": [round(float(v), 5) for v in final_model.coef_[0]], "b": round(float(final_model.intercept_[0]), 5),
+                "mu": [round(float(v), 5) for v in mu], "sd": [round(float(v), 5) for v in sd], "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+    return out
+
+
 def main():
     t0 = time.time()
     client = Client()
@@ -429,10 +513,15 @@ def main():
                 payload["atlas"] = at
         except Exception as e:  # the atlas is a view, never a reason to lose the audit or the model
             payload["report"]["atlas_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+        try:
+            payload["breakout"] = breakout(client)
+        except Exception as e:
+            payload["breakout"] = {"status": "error", "message": f"{type(e).__name__}: {str(e)[:160]}"}
         a = payload["report"]["audit"]
         payload["message"] = (
             (f"Audit of {a['items']} items: agreement {a.get('ami', 'n/a')}, {len(a.get('merges', []))} possible merges, {len(a.get('splits', []))} possible splits. " if a.get("status") == "ok" else "Audit waiting for more items. ")
             + (f"MM model trained on {mm['posts']} posts, rank correlation {mm['spearman']['blend']} on {mm['held_out']} held-out posts." if mm.get("status") == "trained" else f"MM model waiting for history ({mm.get('posts', 0)} of {MIN_POSTS} posts).")
+            + (f" Early-breakout model: {payload['breakout'].get('status')}" + (f", AUC {payload['breakout']['auc']} on {payload['breakout']['test']} later samples." if payload['breakout'].get('auc') else "."))
         )
     except Exception as e:
         # The repository is public and so are its logs: report the kind of failure, never the data.
