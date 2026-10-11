@@ -461,7 +461,7 @@ essays and reviews, capped at 0.6 so nothing unread outranks a good story that w
 reading fades with a two-day half-life over five days (news uses eight hours), and the editor's clicks shift it.
 
 **Getting them read.** Life stories never reach the top-by-opportunity or top-by-attention pools, so each stage
-has a third pool, top by `life`: `structure` opens the article of up to four an hour-tick, `mm` gives them the
+has a third pool, top by `life`: `structure` opens the article of up to four a tick, `mm` gives them the
 history reading, and `enrich` keeps four places in every call for them (six when the news side is quiet), about
 ten an hour. No extra LLM call was added: the same call does more, and it is kept to ten stories a call, because
 with article excerpts a twelve-story answer came back with a section missing. News stories read before this are
