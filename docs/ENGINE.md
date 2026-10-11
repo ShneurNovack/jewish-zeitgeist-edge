@@ -350,3 +350,30 @@ through today.
 first tab. The right column shows the live events on one shared clock (solid: relevant so far; pale: projected;
 tick: now). `/events` lists live and past events, `/event/:id` shows one event's dates, its life in six-hour
 steps with the projection, and its stories in the order they appeared.
+
+## 16. Learning from clicks, and bringing past posts back (October 2026)
+
+**Three answers (`feed {action: "feedback", id | post, value}`).** `posted`, `liked` (a good idea that is not
+being posted now) and `passed`, on a live story or on a past post. Every click is written to the `Taste` entity
+with the embedding of the thing judged, so it outlives the story. `liked` keeps the story in play: it stays a
+candidate, it is listed under Saved, it cannot be the post-now pick for six hours after the click, and the LLM is
+told the editor held it for a better moment.
+
+**Taste reading (`shared/zg2/taste.js`).** For a candidate: a similarity-weighted vote of the judged things near
+it (posted +1, liked +0.8, passed -1; weight rises from cosine 0.55 to 0.80, squared; 120-day half-life), divided
+by the total weight plus a prior of two votes. The result moves the candidate's score by at most a fifth either
+way. With a handful of clicks it moves almost nothing, which is the point: it earns its weight as clicks pile up
+near a subject. It is applied in `buildCandidates` (the brief) and to the bring-back list, and passed to the LLM as
+a fact. It is not yet part of a story's own opportunity reading. Once a few hundred clicks exist, the honest next
+step is to check it on held-out clicks before giving it more weight.
+
+**Bring back (`shared/zg2/evergreen.ts`, blob `evergreen`, every three hours from the `mm` stage).** Past posts
+of the account's own that are worth reposting or remaking now. Two reasons, strongest together: the time of year
+(the Hebrew date within two days back and six ahead, Adar I and II read as one month; then the civil date within
+two back and four ahead; only for posts at least 300 days old) and what is live now (cosine to live events and
+event-less stories, counted from 0.58). What may come back depends on the post's topic on the Past posts map:
+evergreen subjects for either reason (or alone when the post was in its format's top tenth), holiday and Torah
+messages only at their time of year, news only on its anniversary and only from the top 15%, promos never.
+Posts under 150 days old, podcast clips, anything the account ran again within 90 days (cosine 0.82) and
+anything the editor passed are left out. The five best are offered to the LLM in the brief call as an optional
+`bring_back` pick with an angle. Shown under today's plan and in full on the Past posts page.
