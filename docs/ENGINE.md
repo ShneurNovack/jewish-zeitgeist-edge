@@ -427,3 +427,65 @@ eight independent reports in the end. Tested on later stories it has not seen. F
 stories: AUC 0.60, against 0.63 for simply counting reports so far, so it is not exported and nothing is shown.
 Adding the story's final Jewish-relevance score pushed it to 0.97, which is leakage (big stories are the ones that
 get read), so that feature is out. The job retrains daily and the model switches on by itself above 0.70.
+
+## 18. Lanes: news and Jewish life (October 2026)
+
+**The problem.** Everything above ranks a story on attention: how many outlets, how fast, how much talk. That is
+the right test for news and the wrong one for most of what a Jewish account posts between the news: a survivor's
+bar mitzvah, a stranger's kindness, a new Torah scroll. Those come from one outlet, never trend, and so never
+reached the top of anything. The sources were already bringing them in (25 searches and 93 feeds, several aimed
+at kindness, milestones and history); about a third of all live stories are of this kind. They were only buried.
+
+**A lane for every story (`shared/zg2/lanes.js`, written by `analyze`).** `Story.lane` is `news` or `life`, from
+three readings, each used when it exists:
+- Examples: the story's embedding against six example headlines for each of twelve kinds of life story (kindness,
+  survivors, history, pride, simchas, faith, Torah, holidays, journeys, communities, Israel beyond the headlines,
+  culture) and each of nine kinds of news. The reading is the share of the four closest kinds that are life kinds,
+  weighted by how far each stands above the average kind. Embedded once (blob `lanes`), kept on the story
+  (`lane_read`) and redone only when the story grows.
+- History: every past MM post has a lane from the topic the Past posts map files it under (`laneOfTopic`: 1,171
+  life posts, 1,023 news posts, promos and sponsor posts left out). The `mm` stage adds three numbers to
+  `mm_knn`: `life`, the share of the twelve closest laned posts that are life posts; `lcover`, how close the six
+  nearest life posts sit; `lperf`, how the twelve nearest scored life posts did for their format. The two readings
+  agree moderately (correlation 0.52 on 3,000 stories), which is why both are kept and averaged.
+- Read: the language read returns `lane`, `life_kind` and `story` for every story it opens, and its verdict wins.
+
+**Ranking a life story (`lifeReading`, `Story.life`, 0 to 1, no clock in it).** Once read:
+(0.2 + 0.8 × story) × (0.6 × mm + 0.4 × social) × history × spread × Jewish relevance, where `story` is the
+read's answer to "is there one concrete thing here to post: a named person, a moment, a number, something to
+show, as opposed to an essay, a sermon, a column or a listing". That question exists because the read's general
+fit score is generous to anything on a Jewish subject (a weekly Torah essay scored 0.9), and an essay is not a
+post. Before it is read, a prior that only decides the reading order: closeness to MM's life posts, how those
+did, a penalty for opinion pieces, bare social posts and promos, a lower weight for the two kinds that are mostly
+essays and reviews, capped at 0.6 so nothing unread outranks a good story that was read. Where it is shown the
+reading fades with a two-day half-life over five days (news uses eight hours), and the editor's clicks shift it.
+
+**Getting them read.** Life stories never reach the top-by-opportunity or top-by-attention pools, so each stage
+has a third pool, top by `life`: `structure` opens the article of up to four an hour-tick, `mm` gives them the
+history reading, and `enrich` keeps four places in every call for them (six when the news side is quiet), about
+ten an hour. No extra LLM call was added: the same call does more, and it is kept to ten stories a call, because
+with article excerpts a twelve-story answer came back with a section missing. News stories read before this are
+not re-read for the lane alone.
+
+**In the brief.** The call that writes the brief also sees up to seven life stories under their own heading and
+returns `life`: the one to three that would make the best posts today. They are not mixed into the main
+candidate list, where the order is attention.
+
+**What MM's own history says (`life_history.ts`, blob `mm_life`, hourly).** Each life post gets a kind from the
+same example reader, and per kind the blob holds how many the account ran, their average rank in their format,
+the hit rate and the best three. First result: history and did-you-know 30 posts averaging 0.64, communities
+0.59, journeys 0.57 (189 posts), survivors 0.57, kindness 0.56, culture 0.52, pride 0.50, faith 0.49, simchas
+0.49, Israel beyond the headlines 0.48, holidays 0.47, Torah and wisdom 0.43 (363 posts, the most common and the
+weakest).
+
+**Where it shows.** `feed {view:'life'}` (page Jewish life): the read's picks, the other good stories, the kinds
+with what is worth a post and what is waiting, the account's record per kind, unread stories, and evergreen past
+posts. `feed {view:'news'}` (page News): the old board with life left out. The mixed board (Now) puts the first
+life pick third in today's plan and has a Life tab. Sources and Search moved under Engine in the menu.
+
+**Limits.** The lane before the read is right most of the time and wrong often enough to matter at the margin
+(a human story inside a war is filed either way); the read settles it for whatever it opens. The kinds are a
+fixed list. "More than usual" for a kind compares today with the two days before, which is all the history the
+live stories hold. Seven searches were added for the kinds the sources covered least (founders and roots,
+journeys to Judaism, Torah celebrations, survivors' milestones, new synagogues, Israel beyond the headlines, and
+a Hebrew one).
